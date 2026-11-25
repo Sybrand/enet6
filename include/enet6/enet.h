@@ -19,8 +19,8 @@
 #include "enet6/callbacks.h"
 
 #define ENET_VERSION_MAJOR 6
-#define ENET_VERSION_MINOR 1
-#define ENET_VERSION_PATCH 4
+#define ENET_VERSION_MINOR 2
+#define ENET_VERSION_PATCH 0
 #define ENET_VERSION_CREATE(major, minor, patch) (((major)<<16) | ((minor)<<8) | (patch))
 #define ENET_VERSION_GET_MAJOR(version) (((version)>>16)&0xFF)
 #define ENET_VERSION_GET_MINOR(version) (((version)>>8)&0xFF)
@@ -81,6 +81,11 @@ typedef enum _ENetAddressType
  *
  * The host must be specified in network byte-order, and the port must be in host 
  * byte-order.
+ *
+ * scopeId is the IPv6 scope (zone) id: the index of the network interface used to
+ * reach a link-local address such as fe80::1%12 (see enet_address_is_link_local).
+ * It is ignored for every other address. If you fill an ENetAddress by hand, zero
+ * it first (or set scopeId) when the address is link-local.
  */
 typedef struct _ENetAddress
 {
@@ -91,6 +96,7 @@ typedef struct _ENetAddress
        enet_uint8 v4[4];
        enet_uint16 v6[8];
    } host;
+   enet_uint32 scopeId;
 } ENetAddress;
 
 #define ENET_PORT_ANY       0
@@ -552,7 +558,11 @@ ENET_API int        enet_socketset_select (ENetSocket, ENetSocketSet *, ENetSock
     @{
 */
 
-/** Compares two addresses (only the host part)
+/** Compares two addresses (only the host part, the port is not compared)
+
+    For link-local IPv6 addresses the scope ids are compared too, except that a scope
+    id of 0 (not specified) matches any scope id. Once a peer receives a packet its
+    address takes the scope id the packet arrived with.
     @param firstAddress first address to compare
     @param secondAddress second address to compare
     @retval 1 if addresses are equal
@@ -584,6 +594,14 @@ ENET_API int enet_address_is_any(const ENetAddress * address);
 */
 ENET_API int enet_address_is_broadcast(const ENetAddress * address);
 
+/** Checks if an address needs an IPv6 scope id: link-local unicast (fe80::/10) or
+    interface/link-local multicast (ff01::/16, ff02::/16)
+    @param address address to check
+    @retval 1 if address is link-local
+    @returns if the address is link-local and so uses its scopeId
+*/
+ENET_API int enet_address_is_link_local(const ENetAddress * address);
+
 /** Checks if an address is a loopback one
     @param address address to check
     @retval 1 if address is loopback
@@ -593,6 +611,11 @@ ENET_API int enet_address_is_loopback(const ENetAddress * address);
 
 /** Attempts to parse the printable form of the IP address in the parameter hostName
     and sets the host field in the address parameter if successful.
+
+    IPv6 addresses may carry a numeric scope id, such as fe80::1%12 or [fe80::1%12]:1234.
+    Interface names (fe80::1%eth0) are not accepted here. enet_address_set_host accepts them
+    where the system getaddrinfo does (Linux, macOS), but not on Windows, which only takes
+    numeric scope ids (the interface index).
     @param address destination to store the parsed IP address
     @param hostName IP address to parse
     @retval 0 on success
@@ -612,7 +635,9 @@ ENET_API int enet_address_set_host_ip (ENetAddress * address, const char * hostN
 */
 ENET_API int enet_address_set_host (ENetAddress * address, ENetAddressType type, const char * hostName);
 
-#define ENET_ADDRESS_MAX_LENGTH 40 /*full IPv6 addresses take 39 characters + 1 null byte */
+/* longest string enet_address_get_host_ip can produce, null byte included:
+   "[" + 39 characters of IPv6 + "%" and a 10 digit scope id + "]:" + 5 digit port + null byte */
+#define ENET_ADDRESS_MAX_LENGTH 59
 
 /** Gives the printable form of the IP address specified in the address parameter.
     @param address    address printed
